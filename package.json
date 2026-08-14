@@ -1,0 +1,25 @@
+{
+  "name": "pi-ops-subagent",
+  "version": "0.0.1",
+  "description": "Operations-first subagent fleet for pi: read-only probe agents, live fleet cockpit, background/scheduled jobs, named sessions, incident artifacts.",
+  "keywords": ["pi-package", "pi", "subagent", "ops", "sre", "incident-response", "aiops"],
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./extensions/index.ts"
+  },
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "files": ["extensions/", "agents/", "README.md", "LICENSE"],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
