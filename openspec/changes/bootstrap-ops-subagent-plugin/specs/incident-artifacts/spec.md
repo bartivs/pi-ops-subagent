@@ -1,56 +1,86 @@
 ## Purpose
 
-Incident artifact agents generate structured operational outputs — triage, communications, and post-incident reports
-— from probe evidence, with strict JSON schemas and honesty guardrails (confidence, missing-information, redaction)
-in the pattern of Microsoft's On-Call Copilot.
+Incident artifact agents transform supplied probe evidence into strict versioned JSON for triage, communications, and
+post-incident review, with explicit unknowns, evidence references, confidence, and redaction.
 
 ## ADDED Requirements
 
-### Requirement: Artifact agent roles
-The system SHALL ship at least three artifact roles: `triage` (hypotheses + evidence + confidence + immediate
-actions + runbook alignment), `comms` (Slack update + stakeholder brief), and `pir` (post-incident report: timeline,
-customer impact, prevention actions).
+### Requirement: Shared JSON output contract
+Every artifact output SHALL be one JSON object, not markdown or fenced text, with required
+`schemaVersion: "1"`, `artifactType`, `generatedAt` (RFC3339 or `UNKNOWN`), `missingInformation` (string array), and
+`redactions` (integer >= 0). Unknown scalar values SHALL be the string `UNKNOWN`; unknown arrays SHALL be empty and
+explained in `missingInformation`. Unknown keys SHALL fail validation.
 
-#### Scenario: Triage output
-- **WHEN** a `triage` artifact run completes
-- **THEN** its output follows the triage schema with hypotheses, evidence, confidence, immediate actions, and
-runbook alignment
+#### Scenario: Prompt contract
+- **WHEN** a bundled artifact manifest is loaded
+- **THEN** its system prompt explicitly requests `JSON`, contains the complete schema, one valid JSON example, and forbids prose/fences
 
-#### Scenario: Comms output
-- **WHEN** a `comms` run completes
-- **THEN** it produces both a Slack-format update and a non-technical stakeholder summary
+#### Scenario: Truncated JSON
+- **WHEN** child stop reason is `length` or JSON parsing fails
+- **THEN** the artifact is `failed` with parse/stop diagnostics and is not heuristically repaired
 
-#### Scenario: PIR output
-- **WHEN** a `pir` run completes
-- **THEN** it produces a post-incident report with timeline, quantified customer impact, and prevention actions
+### Requirement: Triage schema
+A triage output SHALL set `artifactType: "triage"` and require:
 
-### Requirement: Strict JSON output contracts
-Every artifact agent SHALL emit output conforming to its declared JSON schema; malformed output SHALL be rejected
-and surfaced as a failure.
+- `incidentSummary`: string
+- `severity`: `SEV1 | SEV2 | SEV3 | SEV4 | UNKNOWN`
+- `observations`: array of `{id: string, evidenceId: string, fact: string}`
+- `hypotheses`: array of `{summary: string, evidenceIds: string[], confidence: number}` with confidence 0..1
+- `immediateActions`: array of `{action: string, mutation: boolean, approvalRequired: boolean, runbook: string}`
+- `runbookAlignment`: string
+- shared contract fields
 
-#### Scenario: Schema validation
-- **WHEN** an artifact agent returns output that fails its schema validation
-- **THEN** the run is marked failed with the validation error, not silently accepted
+Every evidence id SHALL refer to supplied evidence. If `mutation` is true, `approvalRequired` SHALL also be true.
 
-### Requirement: Confidence and missing-information discipline
-Artifact agents SHALL not fabricate: when evidence is insufficient, they SHALL mark confidence low and populate a
-missing-information list; undetermined fields SHALL be marked `UNKNOWN`.
+#### Scenario: Valid triage
+- **WHEN** sufficient probe evidence is supplied
+- **THEN** output validates, hypotheses cite existing evidence ids, and confidence values are within 0..1
 
-#### Scenario: Sparse evidence
-- **WHEN** an artifact agent is given sparse evidence
-- **THEN** hypotheses carry low/zero confidence, missing information is listed explicitly, and undetermined fields
-read `UNKNOWN`
+#### Scenario: Unsupported hypothesis
+- **WHEN** a hypothesis has no supporting supplied evidence
+- **THEN** its `evidenceIds` is empty, confidence is 0, and the gap appears in `missingInformation`
 
-### Requirement: Redaction
-Artifact agents SHALL redact credential-like material in outputs.
+### Requirement: Communications schema
+A communications output SHALL set `artifactType: "comms"` and require `status` (`investigating | identified |
+monitoring | resolved | UNKNOWN`), `severity`, `slackUpdate`, `stakeholderBrief`, `knownImpact`, `nextUpdateAt`
+(RFC3339 or `UNKNOWN`), and shared contract fields. It SHALL distinguish observed facts from hypotheses and SHALL NOT
+state an unverified root cause as fact.
 
-#### Scenario: Secret redaction
-- **WHEN** an artifact run encounters credential-like content in evidence
-- **THEN** the output replaces it with a `[REDACTED]` marker
+#### Scenario: Valid communications artifact
+- **WHEN** a comms run completes with partial incident evidence
+- **THEN** it returns both concise Slack text and non-technical stakeholder text while unknown impact/timing is explicit
 
-### Requirement: Parallel artifact composition
-When composing artifacts, the system SHALL run the requested artifact agents concurrently and merge their outputs.
+### Requirement: Post-incident report schema
+A PIR output SHALL set `artifactType: "pir"` and require:
 
-#### Scenario: Concurrent artifact run
-- **WHEN** triage, comms, and pir are requested together
-- **THEN** they run in parallel and the merged result contains all three product blocks
+- `title`: string
+- `status`: `draft | final`
+- `timeline`: array of `{timestamp: string, event: string, evidenceIds: string[]}`
+- `customerImpact`: `{summary: string, quantified: string}`
+- `rootCause`: string
+- `contributingFactors`: string array
+- `preventionActions`: array of `{action: string, owner: string, dueDate: string, status: "open" | "done"}`
+- shared contract fields
+
+A PIR SHALL remain `draft` whenever root cause, quantified impact, or any required timeline fact is unknown.
+
+#### Scenario: Sparse PIR evidence
+- **WHEN** root cause or quantified impact is unavailable
+- **THEN** status is `draft`, unknown values are `UNKNOWN`, and missing information lists the unresolved facts
+
+### Requirement: Secret redaction
+Before parsing or persistence, credential-like values in artifact text SHALL be replaced with `[REDACTED]`; the
+`redactions` count SHALL equal replacements. Evidence ids and non-secret operational identifiers SHALL remain intact.
+
+#### Scenario: Secret-like evidence
+- **WHEN** supplied evidence contains an API key, bearer token, private key block, password assignment, or connection URI credential
+- **THEN** output contains `[REDACTED]`, never the literal secret, and increments `redactions`
+
+### Requirement: Parallel composition with partial success
+Requested artifact types SHALL run concurrently in separate child contexts. The merged result SHALL be an object keyed
+only by requested type; each value SHALL contain either `{status: "done", artifact: <validated object>}` or
+`{status: "failed", error: <redacted diagnostic>}`. One failure SHALL NOT discard valid siblings.
+
+#### Scenario: Mixed artifact composition
+- **WHEN** triage and comms validate but PIR does not
+- **THEN** merged output preserves validated triage/comms objects and reports only PIR as failed

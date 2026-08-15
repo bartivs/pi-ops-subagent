@@ -1,51 +1,90 @@
 ## Purpose
 
-Named sessions give subagents durable, interview-style continuity: a probe or diagnostic agent can be continued
-across turns and restarts, accumulating evidence in its own isolated context while only digests reach the parent.
+Named sessions give a subagent isolated multi-turn continuity across parent turns and restarts, with deterministic
+identity, exact child-session persistence, exclusive locking, and bounded idle lifetime.
 
 ## ADDED Requirements
 
-### Requirement: Named persistent sessions
-The system SHALL support `session` names on subagent calls; sessions persist on disk and continue the same child pi
-conversation across calls.
+### Requirement: Exact named-session input
+The common optional `session` field SHALL be a non-empty handle matching `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`.
+Supplying it SHALL continue one child pi session for the selected agent; omitting it SHALL use an ephemeral child.
+Parallel calls SHALL reject duplicate derived session keys before spawning.
 
-#### Scenario: Continue a session
-- **WHEN** a subagent call specifies `session` and a session with that name exists
-- **THEN** the child continues its existing conversation instead of starting fresh
+#### Scenario: First named call
+- **WHEN** a valid handle has no metadata/session file
+- **THEN** a child session is created and result details set `sessionStatus: created`
 
-### Requirement: Session key derivation
-A session SHALL be derived deterministically from agent name + session handle + parent session + effective cwd so
-collisions don't occur across projects or agents.
+#### Scenario: Continuation
+- **WHEN** the same derived key has a live unexpired session
+- **THEN** the child uses the exact stored `--session <path>` and details set `sessionStatus: continued`
 
-#### Scenario: Distinct keys
-- **WHEN** two sessions share a handle but differ in agent or cwd
-- **THEN** they resolve to different child sessions
+#### Scenario: Invalid handle
+- **WHEN** a handle is empty, over 64 characters, or outside the accepted pattern
+- **THEN** the tool throws before lock or child creation
 
-### Requirement: Fresh session creation
-A call with a `session` name that does not exist SHALL create a new session and report creation in metadata.
+### Requirement: Deterministic session key
+The full derivation input SHALL be UTF-8 strings joined with NUL in this order:
+`ops/v1`, parent session id, canonical effective cwd, agent name, session handle. The storage key SHALL be the first
+32 lowercase hex characters of SHA-256 over that input. Display name SHALL be `ops: <agent> · <handle>`.
 
-#### Scenario: First call creates
-- **WHEN** a session name is used for the first time
-- **THEN** a new child session is created and the result metadata reports "created"
+#### Scenario: Distinct dimensions
+- **WHEN** any of parent id, cwd, agent, or handle differs
+- **THEN** derivation input differs and resolves independently even if a hash collision is theoretically possible
 
-### Requirement: Session locking
-A named session SHALL be usable by only one running call at a time; concurrent use is rejected with a clear error.
+### Requirement: Exact child-session persistence
+Session metadata SHALL live at `<sessionsDir>/<key>/meta.json` (default `<project>/.ops/sessions`) and contain version,
+derivation fields, child session path, created/last-used timestamps, and state `active | expired | ended`. First use
+SHALL spawn with `--session-dir <sessionsDir>/<key>/pi --name <display-name>` and capture the resulting session file; continuation SHALL
+pass that exact path with `--session`.
 
-#### Scenario: Concurrent reject
-- **WHEN** two calls target the same session concurrently
-- **THEN** one is rejected before any child starts, citing the lock
+#### Scenario: Missing stored child file
+- **WHEN** metadata points to a missing or unreadable child session
+- **THEN** continuation fails with path diagnostics and does not silently create a replacement
 
-### Requirement: Session expiry and cleanup
-Sessions SHALL expire after a configurable idle period and be cleaned up automatically; ending a session is explicit.
+### Requirement: Exclusive lock and heartbeat
+A call SHALL acquire `<sessionsDir>/<key>/lock.json` atomically before child spawn. Archive suffix timestamps SHALL
+use UTC `YYYYMMDDTHHMMSSmmmZ`. Lock content SHALL include owner pid, run id, acquired timestamp, and heartbeat timestamp. Heartbeat SHALL update every 5,000 ms. A lock is reclaimable
+only when heartbeat age exceeds 30,000 ms and the recorded pid is not alive. Lock removal SHALL occur in `finally`.
 
-#### Scenario: Idle expiry
-- **WHEN** a session idle for its expiry period is next touched
-- **THEN** it is treated as expired and a fresh session may be started under the same name
+#### Scenario: Concurrent call
+- **WHEN** a live lock already exists for the derived key
+- **THEN** the second call remains unspawned and returns the owner run id plus lock age
 
-### Requirement: Availability without persistence
-Named sessions SHALL require a persisted parent; when the parent runs without a session, session params are rejected
-with guidance to use ephemeral calls.
+#### Scenario: Dead stale owner
+- **WHEN** heartbeat is older than 30,000 ms and the owner pid is absent
+- **THEN** the lock is atomically renamed to `lock.stale.<YYYYMMDDTHHMMSSmmmZ>.json` and the new caller acquires a fresh `lock.json`
 
-#### Scenario: No persisted parent
-- **WHEN** the parent is running with `--no-session` and a call requests `session`
-- **THEN** the call fails with an actionable message instead of silently ignoring the parameter
+#### Scenario: Old but live owner
+- **WHEN** heartbeat is older than 30,000 ms but the owner pid is alive
+- **THEN** automatic reclaim is refused and cleanup requires explicit user action
+
+### Requirement: Idle expiry and explicit end
+`sessionExpiryMs` SHALL default to 604,800,000 and accept integers >= 60,000. Idle age SHALL be measured from
+`lastUsedAt`. On next touch after expiry, old metadata SHALL become `expired` and a new child session MAY be created
+only after the user/caller explicitly supplies `restartExpired: true`. `/ops:session end <key-or-handle>` SHALL mark
+metadata `ended`, remove a non-live lock, and retain files unless cleanup is explicitly requested.
+
+#### Scenario: Expired without restart flag
+- **WHEN** an expired handle is invoked without `restartExpired: true`
+- **THEN** no child spawns and the result explains expiry and the restart field
+
+#### Scenario: Explicit restart
+- **WHEN** the same invocation includes `restartExpired: true`
+- **THEN** a fresh child session/path is created and prior metadata is copied to `meta.expired.<YYYYMMDDTHHMMSSmmmZ>.json`
+
+### Requirement: Persisted parent required
+Named child sessions SHALL require `ctx.sessionManager.isPersisted()` and a parent session id. Ephemeral parents SHALL
+be rejected with guidance to omit `session` or run parent pi with persistence.
+
+#### Scenario: Ephemeral parent
+- **WHEN** the parent uses `--no-session` and a call supplies `session`
+- **THEN** the call throws before key directory or lock creation
+
+### Requirement: Session inspection
+`/ops:session` SHALL support `list`, `info`, `end`, and `cleanup`. Output SHALL include display handle, agent,
+canonical cwd, state, child path, last use, expiry time, and lock owner/age. Cleanup SHALL require explicit selection
+and SHALL refuse live locks.
+
+#### Scenario: List sessions
+- **WHEN** `/ops:session list` runs
+- **THEN** active, expired, and ended entries are shown with deterministic key and status

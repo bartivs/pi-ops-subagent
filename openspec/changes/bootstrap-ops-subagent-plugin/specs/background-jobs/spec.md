@@ -1,63 +1,87 @@
 ## Purpose
 
-Background and scheduled runs let probes and diagnostic chains execute asynchronously and on a calendar, with a
-durable registry so work survives restarts and can be resumed. Results land as artifacts in a gitignored `runs/`.
+Background and scheduled runs execute asynchronously while pi is alive and persist specifications, lifecycle, and
+artifacts under effective `runsDir` (default `<project>/.ops/runs`) so interrupted work remains inspectable and can be resumed explicitly.
 
 ## ADDED Requirements
 
-### Requirement: Async execution
-The system SHALL support `run_async` for single, parallel, and chain modes; the tool returns immediately with a job
-id while the work continues in the background.
+### Requirement: Asynchronous execution ownership
+`runAsync: true` SHALL be valid for single, parallel, and chain calls. It SHALL create a durable job record before
+returning `jobId`, then queue work under the owning pi process. V1 SHALL NOT claim that a worker continues after that
+pi process exits.
 
 #### Scenario: Background probe
-- **WHEN** the parent requests a background run
-- **THEN** the call returns a job id and the probe continues without blocking the parent
+- **WHEN** a valid call sets `runAsync: true`
+- **THEN** the tool returns after the job record is durable and the owning process executes the queued work without blocking the parent turn
 
-### Requirement: Durable run registry
-The system SHALL persist job records (id, status, agent(s), task, timestamps, result path) in a state directory so
-jobs survive parent restarts.
+#### Scenario: Owner exits
+- **WHEN** pi exits while its job is running
+- **THEN** startup reconciliation later marks the stale record `interrupted`; it does not report false continuation
 
-#### Scenario: Restart survival
-- **WHEN** a background job is running and pi restarts
-- **THEN** the job record is still listed and its state reconciles (running jobs may be marked interrupted)
+### Requirement: Exact durable registry
+The registry SHALL be `<runsDir>/registry.json`, containing version `1` and job records with `jobId`, lifecycle state,
+immutable run spec, agent names, created/started/finished timestamps, owner pid, schedule, `nextRunAt`,
+`resumedFromJobId`, and artifact directory. Writes SHALL use a same-directory temp file, fsync where supported, and
+atomic rename. Job states SHALL be `queued | running | done | failed | interrupted | canceled`.
 
-### Requirement: Job status queries
-The system SHALL provide a way to list and inspect jobs with statuses `queued | running | done | failed |
-interrupted`, including per-job result artifacts.
+#### Scenario: Restart reconciliation
+- **WHEN** startup reads a `running` job whose owner pid is absent
+- **THEN** it transactionally changes that job to `interrupted` and preserves its partial artifacts
 
-#### Scenario: Jobs list
-- **WHEN** the user or parent queries jobs
-- **THEN** each job shows id, agent(s), status, started/finished times, and result path
+#### Scenario: Corrupt registry
+- **WHEN** registry JSON or version is invalid
+- **THEN** scheduling/execution fails closed, the corrupt file is preserved, and `/ops:jobs` reports its path and parse error
 
-### Requirement: Resumability
-The system SHALL allow re-running a job from its stored spec; interrupted jobs can be re-queued.
+### Requirement: Per-job artifacts
+Each job SHALL write `<runsDir>/<jobId>/meta.json`, `digest.md`, `evidence.jsonl`, and `usage.json`. `meta.json` SHALL
+contain the immutable spec and final state; evidence SHALL be chronological redacted JSON lines; usage SHALL contain
+per-run and aggregate numeric fields. Files SHALL be mode `0600` where supported.
 
-#### Scenario: Resume a job
-- **WHEN** a job is re-run from the registry
-- **THEN** it re-executes the same task spec and writes a fresh result artifact
+#### Scenario: Successful artifacts
+- **WHEN** a job reaches `done`
+- **THEN** all four files exist and registry artifact path points to that directory
 
-### Requirement: Scheduled runs
-The system SHALL support repeat specs (`interval`, `at`, cron-lite) persisted with the registry; triggers are
-evaluated at pi startup and on an internal tick.
+#### Scenario: Partial failure artifacts
+- **WHEN** a job fails, times out, is canceled, or is interrupted after producing events
+- **THEN** available evidence/usage is retained and `meta.json` identifies the terminal reason
+
+### Requirement: Job commands
+`/ops:jobs` SHALL support `list`, `inspect <jobId>`, `resume <jobId>`, and `cancel <jobId>`. List SHALL show id,
+agents, state, created/started/finished times, schedule/next run, and artifact path. Unknown ids and invalid state
+actions SHALL return actionable errors without registry mutation.
+
+#### Scenario: Resume interrupted job
+- **WHEN** `resume` targets `interrupted` or `failed`
+- **THEN** a new queued job with a new id and `resumedFromJobId` is created from the immutable stored spec
+
+#### Scenario: Resume does not overwrite
+- **WHEN** a job is resumed repeatedly
+- **THEN** each attempt has a unique id/directory and prior records/artifacts remain unchanged
+
+#### Scenario: Cancel running job
+- **WHEN** `cancel` targets `queued` or `running`
+- **THEN** queued work does not spawn or live work receives the termination ladder, then the job becomes `canceled`
+
+### Requirement: Exact schedule schema
+A schedule SHALL contain exactly one of `intervalSec` (integer >= 60) or `at` (RFC3339 timestamp with timezone). Cron
+expressions and multiple schedule keys SHALL be rejected in v1. Schedule records SHALL persist `nextRunAt`; triggers
+SHALL be checked every 10,000 ms only while pi is running.
 
 #### Scenario: Interval schedule
-- **WHEN** a job declares `interval: 6h`
-- **THEN** the registry re-queues the job every 6 hours while pi runs
+- **WHEN** a job has `intervalSec: 21600`
+- **THEN** completion schedules the next run for 21,600 seconds after the trigger time
 
-#### Scenario: One-shot at
-- **WHEN** a job declares `at: <future timestamp>`
-- **THEN** the job is queued once when that time is reached
+#### Scenario: One-shot timestamp
+- **WHEN** a job has a future `at` timestamp
+- **THEN** one job is queued at or after that instant and the schedule is then complete
 
-### Requirement: Artifact output location
-Background results SHALL write digest + evidence + usage to `runs/<job-id>/` which is gitignored.
-
-#### Scenario: Artifacts written
-- **WHEN** a background job completes
-- **THEN** a directory under `runs/` contains the final digest, raw evidence, and usage summary
+#### Scenario: Overdue startup trigger
+- **WHEN** startup finds an overdue interval or one-shot
+- **THEN** it queues exactly one run; intervals advance from current time and one-shots become complete
 
 ### Requirement: Scheduler opt-in
-Scheduled execution SHALL be opt-in per job; no job runs on a schedule unless explicitly defined with a schedule.
+A background call without `schedule` SHALL run once and SHALL NOT create a future trigger.
 
-#### Scenario: Default no-schedule
-- **WHEN** a background job is created without a repeat spec
-- **THEN** it runs once and never re-queues
+#### Scenario: Unscheduled background job
+- **WHEN** `runAsync: true` is supplied without `schedule`
+- **THEN** the job executes once and `nextRunAt` is null

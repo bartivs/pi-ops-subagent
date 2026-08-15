@@ -9,8 +9,16 @@ dist/
 # --- Local ops state (never committed) ---
 # Env contracts may contain credentials (targets, connection lines)
 .ops/contracts/
+.ops/runs/
 .ops/sessions/
 runs/
+
+# --- Temporary / coverage artifacts ---
+*.tmp
+*.temp
+.tmp/
+coverage/
+.nyc_output/
 
 # --- Local builder notes + private rules (never pushed) ---
 .notes/

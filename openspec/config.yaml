@@ -1,32 +1,29 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Implementation agent: DeepSeek V4 Pro in thinking mode. Use maximum reasoning effort for cross-module work.
+  The implementation must remain compatible with pi's public extension/package APIs and TypeScript loaded through jiti.
+  Runtime dependencies are forbidden unless a planning artifact is explicitly amended first; use Node built-ins and pi peer dependencies.
+  Do not expose or persist model reasoning content. Product logs and artifacts contain only tool events, evidence, digests, and declared metadata.
+  Normative priority is: capability specs, then design decisions, then tasks. If artifacts conflict, stop and amend planning instead of guessing.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  specs:
+    - Define exact field names, types, units, defaults, precedence, lifecycle states, and failure behavior; avoid examples as the only definition.
+    - Every requirement must include observable acceptance scenarios, including at least one error or boundary scenario where applicable.
+  design:
+    - Keep an explicit file/module map, configuration table, state-transition table, and error contract synchronized with the specs.
+    - Resolve material open questions before implementation; do not leave alternatives for the apply agent to choose silently.
+  tasks:
+    - Name the files or modules affected and state the verifiable completion condition for each task.
+    - Order tasks by dependency and require focused tests before integration tests.
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+operations:
+  apply:
+    guidance:
+      - Read proposal.md, every specs/*/spec.md, design.md, and tasks.md before editing code.
+      - Implement tasks in numeric order; complete one bounded task at a time and re-read its linked requirement before editing.
+      - Validate all tool inputs at runtime even when the model/provider advertises strict tool schemas.
+      - After each task group, run its focused tests; before completion run npm test, npm run typecheck, and npm run lint if present.
+      - Never mark a task complete when its verification command fails or when behavior differs from a normative scenario.
+      - Do not add compatibility shims, fallback behavior, dependencies, or public fields that are absent from the planning artifacts.
