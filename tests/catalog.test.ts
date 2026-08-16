@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { loadConfig } from "../extensions/config.ts";
-import { discoverCatalog, parseManifest, sha256Hex, ManifestValidationError } from "../extensions/catalog.ts";
+import { discoverCatalog, parseManifest, normalizeManifestEntry, sha256Hex, ManifestValidationError } from "../extensions/catalog.ts";
 
 function tmpdir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ops-catalog-"));
@@ -171,6 +171,55 @@ test("parseManifest rejects bad threshold shapes", () => {
   assert.throws(
     () => parseManifest(path2, "---\nname: t\nkind: probe\nthresholds:\n  - id: t\n    metric: m\n    operator: gt\n    value: 1\n    unit: u\n    severity: warn\n---\nbody"),
     ManifestValidationError as any,
+  );
+});
+
+test("normalizeManifestEntry is reusable stand-alone and matches parseManifest", () => {
+  // A parsed frontmatter object built in memory (as the blueprint parser will do)
+  // normalizes to the exact same fields as a round-trip through the file path.
+  const canonical = "/tmp/reuse.md";
+  const content = "---\nname: reuse\ndescription: A reusable agent\nkind: general\ntools: [read, grep, read]\nmodel: m-1\ntimeoutSeconds: 120\n---\n\nBody here.";
+  const viaFile = parseManifest(canonical, content, "user");
+  const parsed = { frontmatter: {
+    name: "reuse",
+    description: "A reusable agent",
+    kind: "general",
+    tools: ["read", "grep", "read"],
+    model: "m-1",
+    timeoutSeconds: 120,
+  }, body: "Body here." };
+  const viaReuse = normalizeManifestEntry(
+    parsed.frontmatter as Record<string, unknown>,
+    parsed.body,
+    content,
+    canonical,
+    "user",
+  );
+  assert.equal(viaReuse.entry.name, "reuse");
+  assert.equal(viaReuse.entry.source, "user");
+  assert.deepEqual(viaReuse.entry.tools, ["read", "grep"]);
+  assert.equal(viaReuse.entry.contentHash, sha256Hex(content));
+  assert.deepEqual(
+    {
+      name: viaReuse.entry.name,
+      description: viaReuse.entry.description,
+      kind: viaReuse.entry.kind,
+      tools: viaReuse.entry.tools,
+      model: viaReuse.entry.model,
+      timeoutSeconds: viaReuse.entry.timeoutSeconds,
+      body: viaReuse.entry.body,
+      contentHash: viaReuse.entry.contentHash,
+    },
+    {
+      name: viaFile.entry.name,
+      description: viaFile.entry.description,
+      kind: viaFile.entry.kind,
+      tools: viaFile.entry.tools,
+      model: viaFile.entry.model,
+      timeoutSeconds: viaFile.entry.timeoutSeconds,
+      body: viaFile.entry.body,
+      contentHash: viaFile.entry.contentHash,
+    },
   );
 });
 

@@ -73,3 +73,30 @@ test("bundled agents load through the package path without symlinks or copies", 
     assert.ok(st.isDirectory());
   }
 });
+
+test("blueprint pack is published but never loaded as executable Pi resources", () => {
+  const root = tmpdir();
+  const cfg = loadConfig(root);
+  const snap = discoverCatalog(cfg, true, { bundledAgentsDir: PACKAGE_AGENTS, userAgentsDir: path.join(root, "no-user") });
+  const bpDir = path.join(findPackageRoot(), "blueprints");
+  const blueprintNames = [
+    "architecture-review",
+    "testing-quality-review",
+    "security-review",
+    "data-persistence-review",
+    "api-integrations-review",
+    "performance-review",
+    "deployment-operations-review",
+    "documentation-review",
+  ];
+  assert.ok(fs.statSync(bpDir).isDirectory(), "blueprints/ is a real package dir");
+  for (const name of blueprintNames) {
+    assert.ok(fs.existsSync(path.join(bpDir, `${name}.md`)), `${name}.md published`);
+    // No executable catalog entry is added by a blueprint asset alone.
+    assert.ok(!snap.entries.some((e) => e.name === name), `${name} is not an executable agent`);
+  }
+  // The executable catalog never reads from the blueprints directory.
+  for (const e of snap.entries) {
+    assert.ok(!e.canonicalPath.startsWith(bpDir), `${e.name} path does not live under blueprints/`);
+  }
+});

@@ -159,3 +159,106 @@ export const CONFIG_DEFAULTS = {
 } as const;
 
 export const CONFIG_KEYS = Object.freeze(Object.keys(CONFIG_DEFAULTS));
+
+// --- Initializer (agent-init) ---
+/** Public command name. */
+export const INIT_COMMAND_NAME = "/ops:agent-init" as const;
+/** Custom message type carrying the natural-language prompt to the current agent. */
+export const INIT_MESSAGE_TYPE = "ops:agent-init-request" as const;
+/** Stable initialization id prefix: `init-<UUID v4>`. */
+export const INIT_ID_PREFIX = "init-" as const;
+/** Stable immutable preview id prefix: `preview-<64 lowercase sha256 hex>`. */
+export const INIT_PREVIEW_ID_PREFIX = "preview-" as const;
+
+/** Exact initializer tool names registered once and kept inactive outside initialization. */
+export const INIT_SCOPE_TOOL = "ops_agent_init_scope" as const;
+export const INIT_STAGE_TOOL = "ops_agent_init_stage" as const;
+export const INIT_COMMIT_TOOL = "ops_agent_init_commit" as const;
+export const INIT_CANCEL_TOOL = "ops_agent_init_cancel" as const;
+
+// --- Initializer lifecycle ---
+export const INIT_STATES = [
+  "resolving_scope",
+  "researching",
+  "staged",
+  "committing",
+  "completed",
+  "cancelled",
+  "failed",
+] as const;
+export type InitState = (typeof INIT_STATES)[number];
+
+export const TERMINAL_INIT_STATES: ReadonlySet<InitState> = new Set([
+  "completed",
+  "cancelled",
+  "failed",
+]);
+
+// --- Bounds (v1 contract) ---
+export const INIT_PROMPT_MIN_BYTES = 1;
+export const INIT_PROMPT_MAX_BYTES = 20_000;
+export const INIT_CONTEXT_ROOTS_MIN = 1;
+export const INIT_CONTEXT_ROOTS_MAX = 8;
+export const INIT_OUTPUT_ROOTS = 1;
+export const INIT_MANIFESTS_MIN = 1;
+export const INIT_MANIFESTS_MAX = 32;
+export const INIT_BLUEPRINT_PROMPT_MIN_BYTES = 1;
+export const INIT_BLUEPRINT_PROMPT_MAX_BYTES = 51_200;
+export const INIT_BLUEPRINT_TEXT_MAX_BYTES = 1_000;
+export const INIT_AGENTS_MD_MAX_BYTES = 1_048_576;
+export const INIT_GUIDANCE_DISPLAY_BYTES = 300;
+export const INIT_DIAGNOSTIC_BOUND_ENTRIES = 100;
+export const INIT_DIAGNOSTIC_BOUND_BYTES = 51_200;
+export const INIT_DIR_MODE = 0o755;
+export const INIT_MANIFEST_MODE = 0o644;
+
+// --- Guided-managed section markers ---
+export const INIT_MARKER_START = "<!-- pi-ops-subagent:init:start -->" as const;
+export const INIT_MARKER_END = "<!-- pi-ops-subagent:init:end -->" as const;
+
+// --- Tool policy sets ---
+/** The four initializer tools active from command start until terminal state. */
+export const INIT_TOOLS: readonly string[] = [
+  INIT_SCOPE_TOOL,
+  INIT_STAGE_TOOL,
+  INIT_COMMIT_TOOL,
+  INIT_CANCEL_TOOL,
+];
+/** Least-privilege read-only inspection tools made callable after scope acceptance. */
+export const INIT_READ_TOOLS: readonly string[] = ["read", "grep", "find", "ls"];
+/** Exact optional network tools that MAY be activated when scope confirms `allowNetwork`. */
+export const INIT_NETWORK_TOOLS: readonly string[] = [
+  "web_search",
+  "source_check",
+  "fetch_content",
+  "get_search_content",
+];
+
+// --- Managed / generated directory names ---
+/** Conventional project agent folder name, resolved against the project root. */
+export const DEFAULT_AGENTS_DIR = "agents" as const;
+/** Trusted current-project blueprint directory name under the ops state dir. */
+export const OPS_AGENT_BLUEPRINTS_DIR = "ops-agent-blueprints" as const;
+/** The user blueprint root subdir under the agent dir: `pi-ops-subagent/blueprints`. */
+export const USER_BLUEPRINTS_SUBDIR = `${TRUST_SUBDIR}/blueprints` as const;
+/** Bundled blueprint assets subdir within the package root. */
+export const BUNDLED_BLUEPRINTS_DIR = "blueprints" as const;
+
+// --- Generic bundled blueprint pack (exact eight assets) ---
+export const INIT_BUNDLED_BLUEPRINT_NAMES: readonly string[] = [
+  "architecture-review",
+  "testing-quality-review",
+  "security-review",
+  "data-persistence-review",
+  "api-integrations-review",
+  "performance-review",
+  "deployment-operations-review",
+  "documentation-review",
+];
+export const RECOMMENDED_BLUEPRINT_NAMES: ReadonlySet<string> = new Set([
+  "architecture-review",
+  "testing-quality-review",
+  "security-review",
+]);
+export const BLUEPRINT_DEFAULT_KIND = "general" as const;
+export const BLUEPRINT_DEFAULT_TOOLS: readonly string[] = ["read", "grep", "find", "ls"];

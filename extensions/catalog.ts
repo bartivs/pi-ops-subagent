@@ -26,7 +26,7 @@ import type { OpsConfig } from "./config.ts";
 import { resolveAgentDirs } from "./config.ts";
 
 const NAME_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
-const AGENT_KEYS = new Set(["name", "description", "kind", "tools", "model", "timeoutSeconds", "thresholds", "contract"]);
+export const AGENT_KEYS = new Set(["name", "description", "kind", "tools", "model", "timeoutSeconds", "thresholds", "contract"]);
 const KINDS: readonly AgentKind[] = ["general", "probe", "artifact"];
 const THRESHOLD_OPERATORS = ["gt", "gte", "lt", "lte", "eq", "neq"] as const;
 const THRESHOLD_SEVERITIES = ["warning", "critical"] as const;
@@ -117,6 +117,25 @@ export function parseManifest(
       throw new ManifestValidationError(`Unknown frontmatter key "${key}"${hint}`, canonicalPath);
     }
   }
+  return normalizeManifestEntry(frontmatter, body, content, canonicalPath, source);
+}
+
+/**
+ * Normalize and strictly validate an already-parsed manifest-shaped frontmatter
+ * against the executable agent-manifest schema. Shared by `parseManifest`
+ * (executable discovery) and by the initializer's blueprint parser, which strips
+ * its initializer-only keys before delegating here. The caller is responsible
+ * for rejecting frontmatter keys outside the caller's own allowlist; this
+ * function only validates and normalizes the manifest fields it understands.
+ */
+export function normalizeManifestEntry(
+  frontmatter: Record<string, unknown>,
+  body: string,
+  content: string,
+  canonicalPath: string,
+  source: AgentSourceKind = "bundled",
+): { entry: CatalogEntry; problems: CatalogDiagnostics["invalidFiles"] } {
+  const problems: CatalogDiagnostics["invalidFiles"] = [];
 
   const name = frontmatter["name"];
   if (typeof name !== "string" || !NAME_PATTERN.test(name)) {

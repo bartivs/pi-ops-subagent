@@ -73,13 +73,17 @@ import { renderCall as renderSubagentCall, renderResult as renderSubagentResult 
 import { renderFleetWidget } from "./fleet-widget.ts";
 import { createFleetOverlay } from "./fleet-overlay.ts";
 import type { CatalogEntry } from "./types.ts";
+import { registerAgentInitializer } from "./agent-init.ts";
+import { executeSsh, SSHPARAMETERS, SSH_TOOL } from "./ssh-tool.ts";
 
 /** Custom entry type used to render TUI-only catalog reports. */
 export const AGENTS_REPORT_ENTRY = "ops:agents-report" as const;
 
 export default function (pi: ExtensionAPI): void {
   registerOpsAgentsCommand(pi);
+  registerAgentInitializer(pi);
   registerSubagentTool(pi);
+  registerSshTool(pi);
   registerOpsJobsCommand(pi);
   registerOpsSessionCommand(pi);
   registerOpsStatusCommand(pi);
@@ -88,6 +92,29 @@ export default function (pi: ExtensionAPI): void {
 }
 
 /** /ops:session list|info|end|cleanup */
+/** Minimal runtime `ssh` tool so generated SSH probes/generals are runnable. */
+function registerSshTool(pi: ExtensionAPI): void {
+  pi.registerTool({
+    name: SSH_TOOL,
+    label: "SSH",
+    description: "Run a remote command over SSH against a host (read-only commands recommended). Requires a trusted project and opens a direct connection.",
+    parameters: SSHPARAMETERS,
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const env = {
+        hasUI: ctx.hasUI,
+        isProjectTrusted: () => ctx.isProjectTrusted(),
+        uiConfirm: (title: string, body: string) => ctx.ui.confirm(title, body),
+        signal: _signal,
+      };
+      const r = await executeSsh(params as never, env);
+      return {
+        content: [{ type: "text" as const, text: r.summary }],
+        details: { exitCode: r.exitCode, timedOut: r.timedOut, output: r.output, error: r.error },
+      };
+    },
+  });
+}
+
 function registerOpsSessionCommand(pi: ExtensionAPI): void {
   pi.registerCommand("ops:session", {
     description: "Manage named child sessions: list, info <handle|key>, end <handle|key>, cleanup <handle|key>.",

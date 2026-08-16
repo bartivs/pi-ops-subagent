@@ -23,7 +23,7 @@
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   },
-  "files": ["extensions/", "agents/", "README.md", "LICENSE"],
+  "files": ["extensions/", "agents/", "blueprints/", "README.md", "LICENSE"],
   "scripts": {
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"

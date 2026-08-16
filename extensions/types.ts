@@ -7,6 +7,9 @@
 
 import type {
   FLEET_STATES,
+  INIT_ID_PREFIX,
+  INIT_PREVIEW_ID_PREFIX,
+  INIT_STATES,
   JOB_STATES,
   RUN_ID_PREFIX,
 } from "./constants.ts";
@@ -316,3 +319,136 @@ export interface ArtifactOutcome {
 }
 
 export type ArtifactComposition = Partial<Record<ArtifactType, ArtifactOutcome>>;
+
+// --- Initializer (agent-init) ---
+export type InitId = `${typeof INIT_ID_PREFIX}${string}`;
+export type InitPreviewId = `${typeof INIT_PREVIEW_ID_PREFIX}${string}`;
+export type InitState = (typeof INIT_STATES)[number];
+export type InitAction = "create" | "replace" | "unchanged";
+export type BlueprintSource = "bundled" | "user" | "project";
+
+/** A fully validated inert blueprint (never an executable catalog entry). */
+export interface InitBlueprint {
+  name: string;
+  description: string;
+  category: string;
+  when: string;
+  recommendedByDefault: boolean;
+  kind: AgentKind;
+  tools: string[];
+  model?: string;
+  timeoutSeconds?: number;
+  thresholds?: ThresholdSpec[];
+  contract?: string;
+  prompt: string;
+  source: BlueprintSource;
+  canonicalPath: string;
+  contentHash: string;
+}
+
+/** Bounded model-visible blueprint summary (no prompt body). */
+export interface InitBlueprintSummary {
+  name: string;
+  description: string;
+  category: string;
+  when: string;
+  recommendedByDefault: boolean;
+  source: BlueprintSource;
+  contentHash: string;
+}
+
+/** Bounded diagnostics produced by one blueprint discovery. */
+export interface BlueprintDiagnostics {
+  invalidFiles: Array<{ canonicalPath: string; message: string }>;
+  duplicateNames: Array<{ name: string; canonicalPaths: string[] }>;
+  directoryErrors: Array<{ dir: string; message: string }>;
+  trustExclusions: Array<{ canonicalPath: string; reason: string }>;
+  shadowed: Array<{ name: string; source: BlueprintSource; canonicalPath: string }>;
+  omittedCount: number;
+}
+
+/** Immutable, scope-time blueprint snapshot (sole recommendation/generation input). */
+export interface BlueprintSnapshot {
+  blueprints: InitBlueprint[];
+  diagnostics: BlueprintDiagnostics;
+}
+
+/** Accepted research scope (canonicalized, before network/read authorization). */
+export interface InitScope {
+  initializationId: InitId;
+  contextRoots: string[];
+  outputRoot: string;
+  allowNetwork: boolean;
+}
+
+/** One stage-input manifest draft (nullable removals are explicit). */
+export interface InitStageDraft {
+  name: string;
+  description: string;
+  kind?: AgentKind;
+  tools?: string[];
+  model?: string | null;
+  timeoutSeconds?: number | null;
+  thresholds?: ThresholdSpec[] | null;
+  contract?: string | null;
+  prompt?: string;
+  blueprintName?: string;
+}
+
+/** Per-manifest entry in an immutable preview. */
+export interface InitManifestPreview {
+  name: string;
+  action: InitAction;
+  path: string;
+  bytes: string;
+  beforeHash?: string;
+  afterHash: string;
+  /** Bounded line diff for `replace` targets (absent for create/unchanged). */
+  diff?: string;
+}
+
+/** Managed `AGENTS.md` entry in an immutable preview. */
+export interface InitAgentsMdPreview {
+  action: InitAction;
+  path: string;
+  beforeBytes?: string;
+  afterBytes: string;
+  beforeHash?: string;
+  afterHash: string;
+}
+
+/** Bounded diagnostics surfaced in preview details. */
+export interface InitDiagnostics {
+  invalidBlueprints: Array<{ canonicalPath: string; message: string }>;
+  invalidExistingManifests: Array<{ canonicalPath: string; message: string }>;
+  duplicateBlueprintNames: Array<{ name: string; canonicalPaths: string[] }>;
+  directoryErrors: Array<{ dir: string; message: string }>;
+  trustExclusions: Array<{ canonicalPath: string; reason: string }>;
+  omittedCount: number;
+}
+
+/** Immutable, hash-addressed complete preview (sole commit input). */
+export interface InitPreview {
+  schemaVersion: 1;
+  previewId: InitPreviewId;
+  initializationId: InitId;
+  outputRoot: string;
+  manifests: InitManifestPreview[];
+  agentsMd: InitAgentsMdPreview;
+  blueprintProvenance: Array<{ name: string; source: BlueprintSource }>;
+  diagnostics: InitDiagnostics;
+  elevatedToolAgents: Array<{ name: string; tools: string[] }>;
+}
+
+/** Versioned latest-state snapshot carried in tool details for recovery. */
+export interface InitStateDetails {
+  schemaVersion: 1;
+  initializationId: InitId;
+  state: InitState;
+  originalActiveTools: string[];
+  /** Null until `resolving_scope -> researching` accepts canonical scope. */
+  scope: InitScope | null;
+  blueprints: InitBlueprint[];
+  currentPreview: InitPreview | null;
+  error?: string;
+}

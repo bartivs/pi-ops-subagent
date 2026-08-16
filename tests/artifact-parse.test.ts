@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseArtifactOutput, redactArtifactText, composeArtifacts } from "../extensions/artifacts.ts";
+import { normalizeManifestEntry, ManifestValidationError, sha256Hex } from "../extensions/catalog.ts";
 
 const triage = { schemaVersion: "1", artifactType: "triage", generatedAt: "UNKNOWN", missingInformation: [], redactions: 0, incidentSummary: "x", severity: "UNKNOWN", observations: [], hypotheses: [], immediateActions: [], runbookAlignment: "UNKNOWN" };
 const comms = { schemaVersion: "1", artifactType: "comms", generatedAt: "UNKNOWN", missingInformation: [], redactions: 0, status: "UNKNOWN", severity: "UNKNOWN", slackUpdate: "x", stakeholderBrief: "x", knownImpact: "UNKNOWN", nextUpdateAt: "UNKNOWN" };
@@ -54,3 +55,33 @@ test("composition deduplicates requested types and retains thrown diagnostics re
 });
 
 void pir;
+
+test("shared manifest normalization is source-agnostic and fingerprintable", () => {
+  // The factored catalog normalizer must be callable with a hand-built frontmatter
+  // (no executable file on disk), which is exactly the initializer reuse path.
+  const canonical = "/tmp/source-agnostic.md";
+  const content = "---\nname: sn\ndescription: Source agnostic\ntools: [ls, find]\n---\n\nBody.";
+  const { entry } = normalizeManifestEntry(
+    { name: "sn", description: "Source agnostic", tools: ["ls", "find"] } as Record<string, unknown>,
+    "Body.",
+    content,
+    canonical,
+    "bundled",
+  );
+  assert.equal(entry.kind, "general");
+  assert.deepEqual(entry.tools, ["ls", "find"]);
+  assert.equal(entry.canonicalPath, canonical);
+  assert.equal(entry.source, "bundled");
+  assert.equal(entry.contentHash, sha256Hex(content));
+  assert.doesNotThrow(() => normalizeManifestEntry(
+    { name: "ok", description: "d", kind: "probe" } as Record<string, unknown>,
+    "body",
+    content,
+    canonical,
+    "project",
+  ));
+  assert.throws(
+    () => normalizeManifestEntry({ name: "9bad" } as Record<string, unknown>, "body", content, canonical),
+    ManifestValidationError as any,
+  );
+});
